@@ -3,9 +3,11 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/0xjuanma/golazo/internal/api"
 	"github.com/0xjuanma/golazo/internal/fotmob"
+	"github.com/0xjuanma/golazo/internal/timeutil"
 	"github.com/0xjuanma/golazo/internal/ui"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -83,16 +85,20 @@ func (m model) handleMainViewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		switch m.selected {
-		case 0: // Stats view - fetch data progressively (day by day)
+		case 0: // Stats view - fetch the local-day window progressively (UTC date by UTC date)
 			m.statsViewLoading = true
 			m.loading = true
 			m.statsData = nil                          // Clear cached data to force fresh fetch
 			m.statsDaysLoaded = 0                      // Reset progress
-			m.statsTotalDays = fotmob.StatsDataDays    // Set total days to load
 			m.statsMatchesList.SetItems([]list.Item{}) // Clear list
+			// Fix the clock and timezone once for the whole load. Every later
+			// batch reuses this window, so crossing midnight mid-load cannot
+			// change which UTC dates are read or how matches are attributed.
+			m.statsWindow = timeutil.NewDayWindow(time.Now(), time.Local, fotmob.StatsDataDays)
+			m.statsTotalDays = len(m.statsWindow.UTCDates())
 			cmds = append(cmds, ui.SpinnerTick())
-			// Start fetching day 0 (today) first - results shown immediately when it completes
-			cmds = append(cmds, fetchStatsDayData(m.loadCtx, m.fotmobClient, m.useMockData, 0, fotmob.StatsDataDays))
+			// Start with UTC-date batch 0 - results shown immediately when it completes
+			cmds = append(cmds, fetchStatsDayData(m.loadCtx, m.fotmobClient, m.useMockData, m.statsWindow, 0, m.statsTotalDays))
 		case 1: // Live Matches view - preload live matches progressively (parallel batches)
 			m.liveViewLoading = true
 			m.loading = true
@@ -163,16 +169,23 @@ func (m model) handleStatsViewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// No cached data - need to fetch (shouldn't happen normally)
+	// No cached data - need to fetch (shouldn't happen normally). Capture a
+	// fresh fixed window so this fallback load has the same midnight-safe
+	// semantics as a regular load.
 	m.statsViewLoading = true
 	m.loading = true
 	m.statsDaysLoaded = 0
-	m.statsTotalDays = fotmob.StatsDataDays
+	m.statsWindow = timeutil.NewDayWindow(time.Now(), time.Local, fotmob.StatsDataDays)
+	m.statsTotalDays = len(m.statsWindow.UTCDates())
 	if m.loadCancel != nil {
 		m.loadCancel()
 	}
 	m.loadCtx, m.loadCancel = context.WithCancel(context.Background())
-	return m, tea.Batch(m.spinner.Tick, ui.SpinnerTick(), fetchStatsDayData(m.loadCtx, m.fotmobClient, m.useMockData, 0, fotmob.StatsDataDays))
+	return m, tea.Batch(
+		m.spinner.Tick,
+		ui.SpinnerTick(),
+		fetchStatsDayData(m.loadCtx, m.fotmobClient, m.useMockData, m.statsWindow, 0, m.statsTotalDays),
+	)
 }
 
 // loadMatchDetails loads match details for the live matches view.

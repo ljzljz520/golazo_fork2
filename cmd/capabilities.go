@@ -9,7 +9,8 @@ import (
 
 // CapabilitiesSchemaVersion identifies the contract version of the capabilities
 // payload. Bump when fields are added/changed so agents can pin against it.
-const CapabilitiesSchemaVersion = "1"
+// v2: finished gains --tz and GOLAZO_TZ; day windows are local-day based.
+const CapabilitiesSchemaVersion = "2"
 
 // capabilityFlag describes a single flag in machine-readable form.
 type capabilityFlag struct {
@@ -58,8 +59,9 @@ func buildCapabilities() capabilities {
 	}
 	finishedFlagDefs := append([]capabilityFlag{}, commonFlags...)
 	finishedFlagDefs = append(finishedFlagDefs,
-		capabilityFlag{Name: "days", Type: "int", Default: 1, Description: "Number of days to look back (1..7)"},
+		capabilityFlag{Name: "days", Type: "int", Default: 1, Description: "Number of local calendar days to look back (1..7)"},
 		capabilityFlag{Name: "include-upcoming", Type: "bool", Default: false, Description: "Also include today's not-yet-started matches"},
+		capabilityFlag{Name: "tz", Type: "string", Default: "", Description: "IANA timezone for local day boundaries (e.g. America/New_York, Asia/Tokyo, UTC); empty uses " + EnvTimezone + " then the system zone"},
 	)
 	leaguesFlagDefs := append([]capabilityFlag{}, prettyOnly...)
 	leaguesFlagDefs = append(leaguesFlagDefs,
@@ -125,16 +127,18 @@ func buildCapabilities() capabilities {
 			"5": "offline",
 		},
 		EnvVars: map[string]string{
-			EnvAgent:   "Forces compact JSON, enables stderr debug logging",
-			EnvOffline: "Refuses any network call; subcommands return offline unless --mock is set",
+			EnvAgent:    "Forces compact JSON, enables stderr debug logging",
+			EnvOffline:  "Refuses any network call; subcommands return offline unless --mock is set",
+			EnvTimezone: "Default IANA timezone for finished's local day windows; overridden by an explicit --tz",
 		},
 		Envelope: map[string]any{
-			"success":  map[string]any{"status": "ok", "count": "int", "data": "[]object", "degraded": "bool (optional)", "failed_dates": "[]string (optional)"},
+			"success":  map[string]any{"status": "ok", "count": "int", "data": "[]object", "degraded": "bool (optional)", "failed_dates": "[]string UTC YYYY-MM-DD query dates (optional)"},
 			"error":    map[string]any{"status": "error", "code": "string", "message": "string"},
 			"notes": []string{
 				"Errors always go to stderr; stdout stays empty on error.",
 				"Single-item responses (match <id>) still use a data array with count: 1.",
 				"List output is sorted by match_time then id for deterministic ordering.",
+				"finished windows are local calendar days in the resolved timezone; UTC dates are only the upstream query layer, and failed_dates always reports those UTC query dates.",
 			},
 		},
 	}

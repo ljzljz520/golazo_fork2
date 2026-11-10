@@ -277,7 +277,9 @@ func RenderStatsViewWithList(width, height int, finishedList list.Model, details
 		spinnerView := randomSpinner.View()
 		var progressText string
 		if totalDays > 0 && daysLoaded < totalDays {
-			progressText = fmt.Sprintf("  Loading day %d/%d...", daysLoaded+1, totalDays)
+			// Batches are the UTC date reads derived from the local window;
+			// label them neutrally so the count never implies local days.
+			progressText = fmt.Sprintf("  Loading matches %d/%d...", daysLoaded+1, totalDays)
 		}
 		if spinnerView != "" {
 			spinnerArea = spinnerStyle.Render(spinnerView + progressText)

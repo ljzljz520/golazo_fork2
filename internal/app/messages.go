@@ -1,8 +1,9 @@
 package app
 
 import (
+	"time"
+
 	"github.com/0xjuanma/golazo/internal/api"
-	"github.com/0xjuanma/golazo/internal/fotmob"
 	"github.com/0xjuanma/golazo/internal/reddit"
 )
 
@@ -38,21 +39,16 @@ type liveBatchDataMsg struct {
 	err        error
 }
 
-// statsDataMsg contains all stats data (5 days finished + today upcoming) from API response.
-// This is the unified message for stats view - always fetches 5 days, filters client-side.
-type statsDataMsg struct {
-	data *fotmob.StatsData
-}
-
-// statsDayDataMsg contains stats data for a single day (progressive loading).
-// Sent as each day's API calls complete, allowing immediate UI updates.
+// statsDayDataMsg carries the raw matches returned by one UTC-date read of
+// the stats window's fetch plan. The window itself (fixed clock + timezone)
+// lives on the model, so the handler re-filters every batch through the same
+// half-open local interval instead of trusting UTC date buckets.
 type statsDayDataMsg struct {
-	dayIndex int         // 0 = today, 1 = yesterday, etc.
-	isToday  bool        // true if this is today's data
-	isLast   bool        // true if this is the last day to fetch
-	finished []api.Match // finished matches for this day
-	upcoming []api.Match // upcoming matches (only for today)
-	err      error
+	batchIndex int         // 0-based index into the window's UTCDates plan
+	isLast     bool        // true if this is the last UTC date to fetch
+	utcDate    time.Time   // UTC midnight this batch read
+	matches    []api.Match // raw matches for the UTC date, statuses preserved
+	err        error
 }
 
 // pollTickMsg is sent when the 90-second poll interval elapses.

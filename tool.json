@@ -1,5 +1,5 @@
 {
-  "schema_version": "1",
+  "schema_version": "2",
   "name": "golazo",
   "description": "JSON CLI for football match data (live, finished, details, leagues). Intended for agentic dev tools (Claude Code, Codex, MCP servers) and scripts.",
   "homepage": "https://github.com/0xjuanma/golazo",
@@ -9,7 +9,8 @@
     "discovery": "golazo capabilities",
     "env": {
       "GOLAZO_AGENT": "1",
-      "GOLAZO_OFFLINE": "0"
+      "GOLAZO_OFFLINE": "0",
+      "GOLAZO_TZ": "IANA timezone for finished local day windows, e.g. America/New_York or UTC (optional; --tz overrides)"
     },
     "output": {
       "format": "json",

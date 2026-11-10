@@ -134,10 +134,17 @@ func (c *Client) MatchesByDate(ctx context.Context, date time.Time) ([]api.Match
 	return c.MatchesByDateWithTabs(ctx, date, []string{"fixtures", "results"})
 }
 
-// MatchesByDateWithTabs retrieves matches for a specific date, querying only specified tabs.
-// tabs can be: ["fixtures"], ["results"], or ["fixtures", "results"]
+// MatchesByDateWithTabs retrieves matches whose kickoff falls on the UTC
+// calendar date derived from date (date.UTC().Format("2006-01-02")). This is
+// intentionally the UTC query primitive only: it does NOT decide which local
+// day a match belongs to. Callers serving natural-day views must derive the
+// UTC dates to read from a timeutil.DayWindow and re-filter the returned
+// matches through that same half-open local interval, because one local day
+// can span two UTC dates near midnight.
+//
+// tabs can be: ["fixtures"], ["results"], or ["fixtures", "results"].
 // This allows optimizing API calls - e.g., only query "results" for past days.
-// Results are cached per date (cache key includes all tabs for that date).
+// Results are cached per UTC date (cache key includes all tabs for that date).
 func (c *Client) MatchesByDateWithTabs(ctx context.Context, date time.Time, tabs []string) ([]api.Match, error) {
 	// Normalize date to UTC for consistent comparison
 	requestDateStr := date.UTC().Format("2006-01-02")
@@ -302,8 +309,9 @@ func (c *Client) MatchesByDateWithTabs(ctx context.Context, date time.Time, tabs
 	return allMatches, nil
 }
 
-// MatchesForLeagueAndDate fetches matches for a single league on a specific date.
-// Used for progressive loading - allows fetching one league at a time.
+// MatchesForLeagueAndDate fetches matches for a single league on a specific
+// UTC calendar date (see MatchesByDateWithTabs for the UTC-vs-local-day
+// contract). Used for progressive loading - allows fetching one league at a time.
 func (c *Client) MatchesForLeagueAndDate(ctx context.Context, leagueID int, date time.Time, tab string) ([]api.Match, error) {
 	requestDateStr := date.UTC().Format("2006-01-02")
 

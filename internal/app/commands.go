@@ -12,6 +12,7 @@ import (
 	"github.com/0xjuanma/golazo/internal/data"
 	"github.com/0xjuanma/golazo/internal/fotmob"
 	"github.com/0xjuanma/golazo/internal/reddit"
+	"github.com/0xjuanma/golazo/internal/timeutil"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -245,95 +246,75 @@ func fetchPollMatchDetails(client *fotmob.Client, matchID int, useMockData bool)
 	}
 }
 
-// fetchStatsDayData fetches stats data for a single day (progressive loading).
-// dayIndex: 0 = today, 1 = yesterday, etc.
-// totalDays: total number of days to fetch (for isLast calculation)
-// This enables showing results immediately as each day's data arrives.
-func fetchStatsDayData(parentCtx context.Context, client *fotmob.Client, useMockData bool, dayIndex int, totalDays int) tea.Cmd {
+// fetchStatsDayData reads one UTC date from the stats window's fetch plan
+// (progressive loading). The window is fully derived at load start and passed
+// unchanged into every batch, so this function never calls time.Now: a
+// multi-day load straddling midnight keeps reading the exact UTC dates the
+// original local window required.
+//
+// batchIndex is a 0-based position in window.UTCDates(); totalBatches is the
+// plan length used for the isLast marker. Results appear immediately as each
+// UTC date completes.
+func fetchStatsDayData(parentCtx context.Context, client *fotmob.Client, useMockData bool, window timeutil.DayWindow, batchIndex, totalBatches int) tea.Cmd {
 	return func() tea.Msg {
-		isToday := dayIndex == 0
-		isLast := dayIndex == totalDays-1
+		isLast := batchIndex == totalBatches-1
 
 		// Check if cancelled before starting work
 		if parentCtx.Err() != nil {
-			return statsDayDataMsg{dayIndex: dayIndex, isToday: isToday, isLast: true}
+			return statsDayDataMsg{batchIndex: batchIndex, isLast: true}
 		}
 
 		if useMockData {
-			if isToday {
+			// Mock data is single-day; serve it on the first batch only.
+			if batchIndex == 0 {
 				return statsDayDataMsg{
-					dayIndex: dayIndex,
-					isToday:  true,
-					isLast:   isLast,
-					finished: data.MockFinishedMatches(),
-					upcoming: nil,
+					batchIndex: batchIndex,
+					isLast:     isLast,
+					matches:    data.MockFinishedMatches(),
 				}
 			}
-			return statsDayDataMsg{
-				dayIndex: dayIndex,
-				isToday:  false,
-				isLast:   isLast,
-				finished: nil,
-				upcoming: nil,
-			}
+			return statsDayDataMsg{batchIndex: batchIndex, isLast: isLast}
 		}
 
 		if client == nil {
+			return statsDayDataMsg{batchIndex: batchIndex, isLast: isLast}
+		}
+
+		dates := window.UTCDates()
+		if batchIndex < 0 || batchIndex >= len(dates) {
 			return statsDayDataMsg{
-				dayIndex: dayIndex,
-				isToday:  isToday,
-				isLast:   isLast,
-				finished: nil,
-				upcoming: nil,
+				batchIndex: batchIndex,
+				isLast:     isLast,
+				err:        fmt.Errorf("stats batch %d out of range for %d-date plan", batchIndex, len(dates)),
 			}
 		}
+		date := dates[batchIndex]
 
 		ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 		defer cancel()
 
-		// Calculate the date for this day
-		today := time.Now().UTC()
-		date := today.AddDate(0, 0, -dayIndex)
-
-		var matches []api.Match
-		var err error
-
-		if isToday {
-			// Today: need both fixtures (upcoming) and results (finished)
-			matches, err = client.MatchesByDateWithTabs(ctx, date, []string{"fixtures", "results"})
-		} else {
-			// Past days: only need results (finished matches)
-			matches, err = client.MatchesByDateWithTabs(ctx, date, []string{"results"})
+		// UTC dates intersecting the local today sub-window may hold upcoming
+		// fixtures, so read both tabs; earlier UTC dates are history.
+		tabs := []string{"results"}
+		if window.Today().IntersectsUTC(date) {
+			tabs = []string{"fixtures", "results"}
 		}
 
+		matches, err := client.MatchesByDateWithTabs(ctx, date, tabs)
 		if err != nil {
 			return statsDayDataMsg{
-				dayIndex: dayIndex,
-				isToday:  isToday,
-				isLast:   isLast,
-				finished: nil,
-				upcoming: nil,
-				err:      err,
-			}
-		}
-
-		// Split matches into finished and upcoming
-		finished := make([]api.Match, 0, len(matches)/2)
-		upcoming := make([]api.Match, 0, len(matches)/4)
-		for _, match := range matches {
-			if match.Status == api.MatchStatusFinished {
-				finished = append(finished, match)
-			} else if match.Status == api.MatchStatusNotStarted && isToday {
-				upcoming = append(upcoming, match)
+				batchIndex: batchIndex,
+				isLast:     isLast,
+				utcDate:    date,
+				err:        err,
 			}
 		}
 
 		return statsDayDataMsg{
-			dayIndex: dayIndex,
-			isToday:  isToday,
-			isLast:   isLast,
-			finished: finished,
-			upcoming: upcoming,
+			batchIndex: batchIndex,
+			isLast:     isLast,
+			utcDate:    date,
+			matches:    matches,
 		}
 	}
 }

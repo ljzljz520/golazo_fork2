@@ -15,6 +15,7 @@ import (
 	"github.com/0xjuanma/golazo/internal/fotmob"
 	"github.com/0xjuanma/golazo/internal/notify"
 	"github.com/0xjuanma/golazo/internal/reddit"
+	"github.com/0xjuanma/golazo/internal/timeutil"
 	"github.com/0xjuanma/golazo/internal/ui"
 	"github.com/0xjuanma/golazo/internal/ui/logo"
 	"github.com/charmbracelet/bubbles/key"
@@ -77,12 +78,16 @@ type model struct {
 	lastHomeScore       int // Track last known home score for goal notifications
 	lastAwayScore       int // Track last known away score for goal notifications
 
-	// Stats data cache - stores 5 days of data, filtered client-side for Today/3d/5d views
+	// Stats data cache - stores the window's matches, filtered client-side for Today/3d/5d views
 	statsData *fotmob.StatsData
+	// statsWindow is the fixed local-day window captured when a stats load
+	// starts. All progressive batches derive their UTC fetch plan from it, so
+	// crossing midnight mid-load never moves the original window.
+	statsWindow timeutil.DayWindow
 
 	// Progressive loading state (stats view)
-	statsDaysLoaded int // Number of days loaded so far (0-5)
-	statsTotalDays  int // Total days to load (5)
+	statsDaysLoaded int // Number of UTC-date batches loaded so far
+	statsTotalDays  int // Total UTC-date batches in the window's fetch plan
 
 	// Progressive loading state (live view) - batch-based for parallel fetching
 	liveBatchesLoaded   int         // Number of batches loaded so far

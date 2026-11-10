@@ -50,7 +50,7 @@ For events / lineups / stats: use `golazo match <id> --mock` against the bundled
 | Command | Description |
 |---|---|
 | `golazo live` | Live matches across active leagues |
-| `golazo finished [--days N] [--include-upcoming]` | Finished matches over the last N days (1..7, default 1); use `--include-upcoming` to also include today's not-yet-started matches |
+| `golazo finished [--days N] [--include-upcoming] [--tz ZONE]` | Finished matches over the last N **local** days (1..7, default 1); use `--include-upcoming` to also include today's not-yet-started matches; `--tz` pins the timezone used for day boundaries |
 | `golazo match <id>` | Full match details (events, lineups, stats) |
 | `golazo leagues [--all]` | Active leagues (or every supported league) |
 | `golazo capabilities` | Machine-readable contract describing every subcommand, flag, error code and env var — call this once at session start to self-discover the CLI |
@@ -63,6 +63,32 @@ For events / lineups / stats: use `golazo match <id> --mock` against the bundled
 | `--debug` | Emit debug logs to stderr |
 | `--timeout <dur>` | Overall request timeout (default `15s`) |
 | `--pretty` | Indent JSON output |
+
+### Timezones and day windows (`finished`)
+
+`finished` attributes matches to **local calendar days**, not UTC dates:
+
+- Each invocation captures one fixed clock reading and one timezone, then builds a half-open interval `[local-midnight of the first day, local-midnight just after today)`. A kickoff exactly at the start is included; one exactly at the end belongs to the next window.
+- FotMob data is only queryable by UTC date, so Golazo derives the minimal set of UTC dates that cover the local window (an N-day local window maps to N, N+1 or N+2 UTC dates), reads those, and re-filters every match through the same half-open local interval. A 00:30 local kickoff therefore stays in "today" even though it is stored under yesterday's UTC date.
+- The clock is fixed for the whole multi-day load: if the load straddles midnight, the original window and its UTC fetch plan do not move.
+- `--include-upcoming` only admits not-started kickoffs inside the **local today** sub-window.
+- `live` is unaffected: it tracks matches by status, so a live match keeps following across any day boundary.
+
+Timezone resolution order: the explicit `--tz` flag, then `GOLAZO_TZ`, then the system local timezone. Values are IANA names (`America/New_York`, `Asia/Tokyo`, `Europe/London`, ...). Pass `--tz UTC` for pure-UTC calendar-day semantics, which is the exact UTC-compatible mode for pipelines that key off the `match_time` timestamp themselves. An unrecognized zone fails as `invalid_args` before any network call.
+
+```bash
+# Tokyo local day, including this evening's not-yet-started fixtures
+golazo finished --tz Asia/Tokyo --include-upcoming
+
+# Pin the zone for a whole agent session
+export GOLAZO_TZ=America/New_York
+golazo finished --days 3
+
+# Legacy UTC-day behavior
+golazo finished --tz UTC --days 1
+```
+
+The TUI stats view applies the same model using the system local timezone; its Today/3d/5d ranges are sub-windows of the one fixed load window.
 
 ## JSON contract
 
@@ -85,7 +111,7 @@ golazo match 2001 --mock | jq '.data[0].home_team'  # → match details
 
 ### Degraded envelope
 
-`finished` over multiple days may partially fail. When at least one day succeeds, the envelope is flagged degraded with the failing dates listed:
+`finished` over multiple days may partially fail. When at least one UTC date read succeeds, the envelope is flagged degraded with the failing query dates listed. `failed_dates` are always **UTC `YYYY-MM-DD` query dates** (the upstream fetch keys), even though the window itself is expressed in local days:
 
 ```json
 {
@@ -211,6 +237,7 @@ country_code: string   # often empty for international competitions
 |---|---|
 | `GOLAZO_AGENT=1` | Forces compact JSON, enables stderr debug logging |
 | `GOLAZO_OFFLINE=1` | Refuses any network call; subcommands return `offline` unless `--mock` is set |
+| `GOLAZO_TZ` | IANA timezone for `finished` local day windows (e.g. `Asia/Tokyo`, `UTC`); an explicit `--tz` overrides it, unset falls back to the system zone |
 
 ### Recommended agent invocation
 
@@ -256,6 +283,9 @@ golazo finished --days 3 --pretty
 
 # Today's full slate (finished + still-to-come)
 golazo finished --include-upcoming
+
+# Same window interpreted in Tokyo local time
+golazo finished --tz Asia/Tokyo --include-upcoming
 
 # Single match details (best-effort; reliable only against mock IDs)
 golazo match 2001 --mock
@@ -306,7 +336,7 @@ Use this table to decide whether to retry, fix the call, or give up.
 
 | Error code | Exit | Typical cause | Should agent retry? |
 |---|---|---|---|
-| `invalid_args` | `2` | Bad flag value (e.g. `--days 99`, non-numeric match ID) | **No** — fix the call. Retrying will keep failing. |
+| `invalid_args` | `2` | Bad flag value (e.g. `--days 99`, non-numeric match ID, unknown `--tz` zone) | **No** — fix the call. Retrying will keep failing. |
 | `not_found` | `3` | Unknown match ID (mock mode), or match has no data | **No** — pick a fresh ID via a list call. |
 | `timeout` | `4` | Upstream slow or network congested | **Yes**, with a larger `--timeout` (e.g. `--timeout 30s`). |
 | `upstream_error` | `1` | FotMob 4xx/5xx, network failure, Cloudflare challenge | **Once** — transient errors recover. For `match <id>`, do not retry on 404: cold calls are expected to fail (see [Known limitations](#known-limitations)). |
